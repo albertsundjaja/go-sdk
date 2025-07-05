@@ -7,8 +7,11 @@
 package jsonschema
 
 import (
+	"bytes"
+	"encoding/gob"
 	"fmt"
 	"reflect"
+	"sync"
 
 	"github.com/modelcontextprotocol/go-sdk/internal/util"
 )
@@ -39,7 +42,8 @@ import (
 // The types must not have cycles.
 func For[T any]() (*Schema, error) {
 	// TODO: consider skipping incompatible fields, instead of failing.
-	s, err := forType(reflect.TypeFor[T]())
+	seen := make(map[reflect.Type]bool)
+	s, err := forType(reflect.TypeFor[T](), seen)
 	if err != nil {
 		var z T
 		return nil, fmt.Errorf("For[%T](): %w", z, err)
@@ -47,7 +51,9 @@ func For[T any]() (*Schema, error) {
 	return s, nil
 }
 
-func forType(t reflect.Type) (*Schema, error) {
+var typeSchema sync.Map // map[reflect.Type][]byte - cached schemas
+
+func forType(t reflect.Type, seen map[reflect.Type]bool) (*Schema, error) {
 	// Follow pointers: the schema for *T is almost the same as for T, except that
 	// an explicit JSON "null" is allowed for the pointer.
 	allowNull := false
@@ -60,6 +66,21 @@ func forType(t reflect.Type) (*Schema, error) {
 		s   = new(Schema)
 		err error
 	)
+
+	if seen[t] {
+		return nil, fmt.Errorf("cycle detected for type %v", t)
+	}
+	seen[t] = true
+	defer delete(seen, t)
+
+	if cachedS, ok := typeSchema.Load(t); ok {
+		err := gob.NewDecoder(bytes.NewReader(cachedS.([]byte))).Decode(s)
+		if err != nil {
+			return nil, fmt.Errorf("decoding cached schema: %w", err)
+		}
+		adjustTypesForPointer(s, allowNull)
+		return s, nil
+	}
 
 	switch t.Kind() {
 	case reflect.Bool:
@@ -81,14 +102,14 @@ func forType(t reflect.Type) (*Schema, error) {
 			return nil, fmt.Errorf("unsupported map key type %v", t.Key().Kind())
 		}
 		s.Type = "object"
-		s.AdditionalProperties, err = forType(t.Elem())
+		s.AdditionalProperties, err = forType(t.Elem(), seen)
 		if err != nil {
 			return nil, fmt.Errorf("computing map value schema: %v", err)
 		}
 
 	case reflect.Slice, reflect.Array:
 		s.Type = "array"
-		s.Items, err = forType(t.Elem())
+		s.Items, err = forType(t.Elem(), seen)
 		if err != nil {
 			return nil, fmt.Errorf("computing element schema: %v", err)
 		}
@@ -114,7 +135,7 @@ func forType(t reflect.Type) (*Schema, error) {
 			if s.Properties == nil {
 				s.Properties = make(map[string]*Schema)
 			}
-			s.Properties[info.Name], err = forType(field.Type)
+			s.Properties[info.Name], err = forType(field.Type, seen)
 			if err != nil {
 				return nil, err
 			}
@@ -126,9 +147,19 @@ func forType(t reflect.Type) (*Schema, error) {
 	default:
 		return nil, fmt.Errorf("type %v is unsupported by jsonschema", t)
 	}
+	buf := new(bytes.Buffer)
+	err = gob.NewEncoder(buf).Encode(s)
+	if err != nil {
+		return nil, fmt.Errorf("encoding schema: %w", err)
+	}
+	typeSchema.Store(t, buf.Bytes())
+	adjustTypesForPointer(s, allowNull)
+	return s, nil
+}
+
+func adjustTypesForPointer(s *Schema, allowNull bool) {
 	if allowNull && s.Type != "" {
 		s.Types = []string{"null", s.Type}
 		s.Type = ""
 	}
-	return s, nil
 }

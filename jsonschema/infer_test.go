@@ -91,3 +91,28 @@ func TestForType(t *testing.T) {
 		})
 	}
 }
+
+func TestForWithMutation(t *testing.T) {
+	// This test ensures that the cached schema is not mutated when the caller
+	// mutates the returned schema.
+	type T struct {
+		X int
+		Y map[string]int
+	}
+	s, err := jsonschema.For[T]()
+	if err != nil {
+		t.Fatalf("For: %v", err)
+	}
+	s.Properties["Y"].Type = "mutated"
+	if s.Properties["Y"].Type != "mutated" {
+		// Paranoid check, but ensure that the mutation is applied.
+		t.Fatalf("ForWithMutation: mutation to returned schema should be applied")
+	}
+	s2, err := jsonschema.For[T]()
+	if err != nil {
+		t.Fatalf("For: %v", err)
+	}
+	if s2.Properties["Y"].Type == "mutated" {
+		t.Fatalf("ForWithMutation: mutation to returned schema should not mutate the cached schema")
+	}
+}
