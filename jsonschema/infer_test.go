@@ -96,27 +96,49 @@ func TestForWithMutation(t *testing.T) {
 	// This test ensures that the cached schema is not mutated when the caller
 	// mutates the returned schema.
 	type S struct {
-		a int
+		A int
 	}
 	type T struct {
-		X int `json:"required"`
-		Y map[string]int
-		Z []S
+		A int `json:"A"`
+		B map[string]int
+		C []S
+		D [3]S
+		E *bool
 	}
 	s, err := jsonschema.For[T]()
 	if err != nil {
 		t.Fatalf("For: %v", err)
 	}
-	s.Properties["Y"].Type = "mutated"
-	if s.Properties["Y"].Type != "mutated" {
-		// Paranoid check, but ensure that the mutation is applied.
-		t.Fatalf("ForWithMutation: mutation to returned schema should be applied")
-	}
+	s.Required[0] = "mutated"
+	s.Properties["A"].Type = "mutated"
+	s.Properties["C"].Items.Type = "mutated"
+	s.Properties["D"].MaxItems = jsonschema.Ptr(10)
+	s.Properties["D"].MinItems = jsonschema.Ptr(10)
+	s.Properties["E"].Types[0] = "mutated"
+
 	s2, err := jsonschema.For[T]()
 	if err != nil {
 		t.Fatalf("For: %v", err)
 	}
-	if s2.Properties["Y"].Type == "mutated" {
-		t.Fatalf("ForWithMutation: mutation to returned schema should not mutate the cached schema")
+	if s2.Properties["A"].Type == "mutated" {
+		t.Fatalf("ForWithMutation: expected A.Type to not be mutated")
+	}
+	if s2.Properties["B"].AdditionalProperties.Type == "mutated" {
+		t.Fatalf("ForWithMutation: expected B.AdditionalProperties.Type to not be mutated")
+	}
+	if s2.Properties["C"].Items.Type == "mutated" {
+		t.Fatalf("ForWithMutation: expected C.Items.Type to not be mutated")
+	}
+	if *s2.Properties["D"].MaxItems == 10 {
+		t.Fatalf("ForWithMutation: expected D.MaxItems to not be mutated")
+	}
+	if *s2.Properties["D"].MinItems == 10 {
+		t.Fatalf("ForWithMutation: expected D.MinItems to not be mutated")
+	}
+	if s2.Properties["E"].Types[0] == "mutated" {
+		t.Fatalf("ForWithMutation: expected E.Types[0] to not be mutated")
+	}
+	if s2.Required[0] == "mutated" {
+		t.Fatalf("ForWithMutation: expected Required[0] to not be mutated")
 	}
 }

@@ -49,7 +49,7 @@ func For[T any]() (*Schema, error) {
 	return s, nil
 }
 
-var typeSchema sync.Map // map[reflect.Type][]byte - cached schemas
+var typeSchema sync.Map // map[reflect.Type]*Schema
 
 func forType(t reflect.Type, seen map[reflect.Type]bool) (*Schema, error) {
 	// Follow pointers: the schema for *T is almost the same as for T, except that
@@ -58,6 +58,12 @@ func forType(t reflect.Type, seen map[reflect.Type]bool) (*Schema, error) {
 	for t.Kind() == reflect.Pointer {
 		allowNull = true
 		t = t.Elem()
+	}
+
+	if cachedS, ok := typeSchema.Load(t); ok {
+		s := deepCopySchema(cachedS.(*Schema))
+		adjustTypesForPointer(s, allowNull)
+		return s, nil
 	}
 
 	var (
@@ -70,12 +76,6 @@ func forType(t reflect.Type, seen map[reflect.Type]bool) (*Schema, error) {
 	}
 	seen[t] = true
 	defer delete(seen, t)
-
-	if cachedS, ok := typeSchema.Load(t); ok {
-		s = deepCopySchema(cachedS.(*Schema))
-		adjustTypesForPointer(s, allowNull)
-		return s, nil
-	}
 
 	switch t.Kind() {
 	case reflect.Bool:
@@ -161,7 +161,8 @@ func deepCopySchema(s *Schema) *Schema {
 		return nil
 	}
 
-	clone := *s
+	clone := new(Schema)
+	clone.Type = s.Type
 
 	if s.Items != nil {
 		clone.Items = deepCopySchema(s.Items)
@@ -192,5 +193,5 @@ func deepCopySchema(s *Schema) *Schema {
 		}
 	}
 
-	return &clone
+	return clone
 }
