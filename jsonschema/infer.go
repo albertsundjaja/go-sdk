@@ -7,8 +7,6 @@
 package jsonschema
 
 import (
-	"bytes"
-	"encoding/gob"
 	"fmt"
 	"reflect"
 	"sync"
@@ -74,10 +72,7 @@ func forType(t reflect.Type, seen map[reflect.Type]bool) (*Schema, error) {
 	defer delete(seen, t)
 
 	if cachedS, ok := typeSchema.Load(t); ok {
-		err := gob.NewDecoder(bytes.NewReader(cachedS.([]byte))).Decode(s)
-		if err != nil {
-			return nil, fmt.Errorf("decoding cached schema: %w", err)
-		}
+		s = deepCopySchema(cachedS.(*Schema))
 		adjustTypesForPointer(s, allowNull)
 		return s, nil
 	}
@@ -147,12 +142,7 @@ func forType(t reflect.Type, seen map[reflect.Type]bool) (*Schema, error) {
 	default:
 		return nil, fmt.Errorf("type %v is unsupported by jsonschema", t)
 	}
-	buf := new(bytes.Buffer)
-	err = gob.NewEncoder(buf).Encode(s)
-	if err != nil {
-		return nil, fmt.Errorf("encoding schema: %w", err)
-	}
-	typeSchema.Store(t, buf.Bytes())
+	typeSchema.Store(t, deepCopySchema(s))
 	adjustTypesForPointer(s, allowNull)
 	return s, nil
 }
@@ -162,4 +152,45 @@ func adjustTypesForPointer(s *Schema, allowNull bool) {
 		s.Types = []string{"null", s.Type}
 		s.Type = ""
 	}
+}
+
+// deepCopySchema makes a deep copy of a Schema.
+// Only fields that are pointers and modified by forType are copied.
+func deepCopySchema(s *Schema) *Schema {
+	if s == nil {
+		return nil
+	}
+
+	clone := *s
+
+	if s.Items != nil {
+		clone.Items = deepCopySchema(s.Items)
+	}
+	if s.AdditionalProperties != nil {
+		clone.AdditionalProperties = deepCopySchema(s.AdditionalProperties)
+	}
+	if s.MinItems != nil {
+		minItems := *s.MinItems
+		clone.MinItems = &minItems
+	}
+	if s.MaxItems != nil {
+		maxItems := *s.MaxItems
+		clone.MaxItems = &maxItems
+	}
+	if s.Types != nil {
+		clone.Types = make([]string, len(s.Types))
+		copy(clone.Types, s.Types)
+	}
+	if s.Required != nil {
+		clone.Required = make([]string, len(s.Required))
+		copy(clone.Required, s.Required)
+	}
+	if s.Properties != nil {
+		clone.Properties = make(map[string]*Schema)
+		for k, v := range s.Properties {
+			clone.Properties[k] = deepCopySchema(v)
+		}
+	}
+
+	return &clone
 }

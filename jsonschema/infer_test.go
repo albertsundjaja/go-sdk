@@ -95,9 +95,13 @@ func TestForType(t *testing.T) {
 func TestForWithMutation(t *testing.T) {
 	// This test ensures that the cached schema is not mutated when the caller
 	// mutates the returned schema.
+	type S struct {
+		a int
+	}
 	type T struct {
-		X int
+		X int `json:"required"`
 		Y map[string]int
+		Z []S
 	}
 	s, err := jsonschema.For[T]()
 	if err != nil {
